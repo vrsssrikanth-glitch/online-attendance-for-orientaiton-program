@@ -545,256 +545,135 @@ st.divider()
 
 st.subheader("📊 Today's Attendance")
 
-
 if st.button(
     "🔄 Refresh Dashboard",
     use_container_width=False
 ):
-
-    st.session_state.report_df = None
-
     st.rerun()
-col1, col2, col3, col4 = st.columns(4)
-# ============================================================
-# BATCH-WISE PRESENT COUNT
-# ============================================================
-
-st.subheader("📊 Batch-wise Present")
-
 
 # ------------------------------------------------------------
-# Create student ID → batch lookup
+# Total strength - live from Supabase
 # ------------------------------------------------------------
-
 try:
-
-    all_students_for_batch = get_all_students()
-
-    student_batch_map = {
-        str(student["student_id"]): student["batch"]
-        for student in all_students_for_batch
-    }
-
-except Exception as e:
-
-    student_batch_map = {}
-
-    st.error(
-        f"Unable to load batch information: {e}"
-    )
-
-
-# ------------------------------------------------------------
-# Count PRESENT students batch-wise
-# ------------------------------------------------------------
-
-batch_present = {}
-
-for record in today_records:
-
-    status = str(
-        record.get("status", "")
-    ).lower()
-
-    if status == "present":
-
-        student_id_key = str(
-            record["student_id"]
-        )
-
-        batch = student_batch_map.get(
-            student_id_key,
-            "Unknown"
-        )
-
-        batch_present[batch] = (
-            batch_present.get(batch, 0) + 1
-        )
-
-
-# ------------------------------------------------------------
-# Display batches in fixed order
-# ------------------------------------------------------------
-
-batch_order = [
-    "A",
-    "1",
-    "B",
-    "2",
-    "C",
-    "3",
-    "D",
-    "4"
-]
-
-
-batch_columns = st.columns(
-    len(batch_order)
-)
-
-
-for column, batch in zip(
-    batch_columns,
-    batch_order
-):
-
-    with column:
-
-        count = batch_present.get(
-            batch,
-            0
-        )
-
-        st.metric(
-            f"Batch {batch}",
-            count
-        )
-
-
-# ------------------------------------------------------------
-# Total Present
-# ------------------------------------------------------------
-
-st.markdown(
-    f"""
-    ### 🟢 **TOTAL PRESENT: {present_count} / {total_strength}**
-    """
-)
-
-
-# ------------------------------------------------------------
-# Total strength
-# ------------------------------------------------------------
-
-try:
-
     total_strength = get_total_strength()
-
 except Exception as e:
-
-    st.error(
-        f"Unable to get total student strength: {e}"
-    )
-
+    st.error(f"Unable to get total student strength: {e}")
     total_strength = 0
 
-
 # ------------------------------------------------------------
-# Today's attendance
+# Today's attendance - live from Supabase
 # ------------------------------------------------------------
-
 try:
-
     today_records = get_today_attendance()
-
 except Exception as e:
-
-    st.error(
-        f"Unable to get today's attendance: {e}"
-    )
-
+    st.error(f"Unable to get today's attendance: {e}")
     today_records = []
-
 
 # ------------------------------------------------------------
 # Count present / absent
 # ------------------------------------------------------------
-
 present_count = sum(
-    1
-    for record in today_records
-    if str(
-        record.get("status", "")
-    ).lower() == "present"
+    1 for record in today_records
+    if str(record.get("status", "")).strip().lower() == "present"
 )
-
 
 absent_count = sum(
-    1
-    for record in today_records
-    if str(
-        record.get("status", "")
-    ).lower() == "absent"
+    1 for record in today_records
+    if str(record.get("status", "")).strip().lower() == "absent"
 )
-
 
 not_marked_count = max(
     0,
-    total_strength
-    - present_count
-    - absent_count
+    total_strength - present_count - absent_count
 )
 
-
 # ============================================================
-# DASHBOARD METRICS
+# MAIN DASHBOARD METRICS
 # ============================================================
 
 col1, col2, col3, col4 = st.columns(4)
 
-
 with col1:
-
-    st.metric(
-        "👥 Total Strength",
-        total_strength
-    )
-
+    st.metric("👥 Total Strength", total_strength)
 
 with col2:
-
-    st.metric(
-        "🟢 Present",
-        f"{present_count} / {total_strength}"
-    )
-
+    st.metric("🟢 Present", f"{present_count} / {total_strength}")
 
 with col3:
-
-    st.metric(
-        "🔴 Absent",
-        absent_count
-    )
-
+    st.metric("🔴 Absent", absent_count)
 
 with col4:
-
-    st.metric(
-        "⏳ Not Marked",
-        not_marked_count
-    )
-
+    st.metric("⏳ Not Marked", not_marked_count)
 
 # ============================================================
 # PRESENT PERCENTAGE
 # ============================================================
 
-if total_strength > 0:
-
-    percentage = (
-        present_count
-        / total_strength
-        * 100
-    )
-
-else:
-
-    percentage = 0
-
-
-st.progress(
-    min(percentage / 100, 1.0)
+percentage = (
+    present_count / total_strength * 100
+    if total_strength > 0 else 0
 )
 
-st.write(
-    f"**Present: {present_count} / "
-    f"{total_strength} "
+st.progress(min(percentage / 100, 1.0))
+
+st.markdown(
+    f"**🟢 TOTAL PRESENT: {present_count} / {total_strength} "
     f"({percentage:.2f}%)**"
 )
 
+# ============================================================
+# BATCH-WISE PRESENT
+# ============================================================
+
+st.subheader("📊 Batch-wise Present")
+
+# Student → Batch mapping is cached for 60 seconds so the
+# dashboard remains fast while still allowing periodic updates.
+@st.cache_data(ttl=60, show_spinner=False)
+def get_student_batch_map():
+    students = get_all_students()
+    return {
+        str(student["student_id"]): str(student["batch"])
+        for student in students
+    }
+
+try:
+    student_batch_map = get_student_batch_map()
+except Exception as e:
+    student_batch_map = {}
+    st.error(f"Unable to load batch information: {e}")
+
+batch_present = {}
+
+for record in today_records:
+    if str(record.get("status", "")).strip().lower() == "present":
+        student_id_key = str(record.get("student_id"))
+        batch = student_batch_map.get(student_id_key, "Unknown")
+        batch_present[batch] = batch_present.get(batch, 0) + 1
+
+batch_order = ["A", "1", "B", "2", "C", "3", "D", "4"]
+
+batch_columns = st.columns(len(batch_order))
+
+for column, batch in zip(batch_columns, batch_order):
+    with column:
+        st.metric(
+            f"Batch {batch}",
+            batch_present.get(batch, 0)
+        )
+
+# Show any unexpected batch values rather than silently losing them.
+unknown_present = batch_present.get("Unknown", 0)
+if unknown_present:
+    st.warning(
+        f"⚠️ {unknown_present} present student(s) could not be matched to a batch."
+    )
+
+st.markdown(
+    f"### 🟢 **TOTAL PRESENT: {present_count} / {total_strength}**"
+)
 
 st.divider()
-
 
 # ============================================================
 # SEARCH STUDENT
