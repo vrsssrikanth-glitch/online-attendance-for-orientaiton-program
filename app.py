@@ -554,6 +554,112 @@ if st.button(
     st.session_state.report_df = None
 
     st.rerun()
+col1, col2, col3, col4 = st.columns(4)
+# ============================================================
+# BATCH-WISE PRESENT COUNT
+# ============================================================
+
+st.subheader("📊 Batch-wise Present")
+
+
+# ------------------------------------------------------------
+# Create student ID → batch lookup
+# ------------------------------------------------------------
+
+try:
+
+    all_students_for_batch = get_all_students()
+
+    student_batch_map = {
+        str(student["student_id"]): student["batch"]
+        for student in all_students_for_batch
+    }
+
+except Exception as e:
+
+    student_batch_map = {}
+
+    st.error(
+        f"Unable to load batch information: {e}"
+    )
+
+
+# ------------------------------------------------------------
+# Count PRESENT students batch-wise
+# ------------------------------------------------------------
+
+batch_present = {}
+
+for record in today_records:
+
+    status = str(
+        record.get("status", "")
+    ).lower()
+
+    if status == "present":
+
+        student_id_key = str(
+            record["student_id"]
+        )
+
+        batch = student_batch_map.get(
+            student_id_key,
+            "Unknown"
+        )
+
+        batch_present[batch] = (
+            batch_present.get(batch, 0) + 1
+        )
+
+
+# ------------------------------------------------------------
+# Display batches in fixed order
+# ------------------------------------------------------------
+
+batch_order = [
+    "A",
+    "1",
+    "B",
+    "2",
+    "C",
+    "3",
+    "D",
+    "4"
+]
+
+
+batch_columns = st.columns(
+    len(batch_order)
+)
+
+
+for column, batch in zip(
+    batch_columns,
+    batch_order
+):
+
+    with column:
+
+        count = batch_present.get(
+            batch,
+            0
+        )
+
+        st.metric(
+            f"Batch {batch}",
+            count
+        )
+
+
+# ------------------------------------------------------------
+# Total Present
+# ------------------------------------------------------------
+
+st.markdown(
+    f"""
+    ### 🟢 **TOTAL PRESENT: {present_count} / {total_strength}**
+    """
+)
 
 
 # ------------------------------------------------------------
