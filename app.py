@@ -1,6 +1,7 @@
 import streamlit as st
 from supabase import create_client
-from datetime import datetime
+from datetime import datetime, date
+from io import BytesIO
 from zoneinfo import ZoneInfo
 import pandas as pd
 
@@ -329,6 +330,358 @@ def update_attendance(
         )
         .execute()
     )
+
+
+# ============================================================
+# GET ALL ATTENDANCE - PAGINATED
+# ============================================================
+
+def get_all_attendance():
+    """
+    Get the complete attendance history from Supabase.
+    Uses pagination so the Supabase/PostgREST 1000-row limit
+    does not truncate the report.
+    """
+    all_records = []
+
+    start = 0
+    page_size = 1000
+
+    while True:
+        response = (
+            supabase
+            .table("attendance")
+            .select(
+                "student_id, attendance_date, status, "
+                "marked_by, marked_at"
+            )
+            .order("attendance_date")
+            .order("student_id")
+            .range(
+                start,
+                start + page_size - 1
+            )
+            .execute()
+        )
+
+        batch = response.data or []
+        all_records.extend(batch)
+
+        if len(batch) < page_size:
+            break
+
+        start += page_size
+
+    return all_records
+
+
+# ============================================================
+# BUILD COMPLETE ATTENDANCE HISTORY REPORT
+# ============================================================
+
+def get_complete_attendance_report():
+    """
+    Build a continuous attendance report from the first
+    attendance date through today.
+
+    Every student from the students table is included.
+    If a student has no attendance record for a date,
+    that date is shown as Absent.
+    """
+
+    students = get_all_students()
+    attendance = get_all_attendance()
+
+    if not students:
+        return pd.DataFrame()
+
+    students_df = pd.DataFrame(students)
+
+    # If there are no attendance records yet, return the
+    # student list only. No date columns can be generated.
+    if not attendance:
+        return students_df[
+            ["student_id", "student_name", "branch", "batch"]
+        ].rename(
+            columns={
+                "student_id": "Student ID",
+                "student_name": "Student Name",
+                "branch": "Branch",
+                "batch": "Batch"
+            }
+        )
+
+    attendance_df = pd.DataFrame(attendance)
+
+    attendance_df["attendance_date"] = pd.to_datetime(
+        attendance_df["attendance_date"],
+        errors="coerce"
+    ).dt.date
+
+    attendance_df = attendance_df.dropna(
+        subset=["attendance_date"]
+    )
+
+    if attendance_df.empty:
+        return students_df[
+            ["student_id", "student_name", "branch", "batch"]
+        ].rename(
+            columns={
+                "student_id": "Student ID",
+                "student_name": "Student Name",
+                "branch": "Branch",
+                "batch": "Batch"
+            }
+        )
+
+    # First attendance date is Day 1. Continue through today.
+    first_date = min(attendance_df["attendance_date"])
+    last_date = india_time.date()
+
+    all_dates = pd.date_range(
+        start=first_date,
+        end=last_date,
+        freq="D"
+    ).date
+
+    # If duplicate attendance rows somehow exist for a student/date,
+    # keep the last returned record.
+    attendance_df = (
+        attendance_df
+        .drop_duplicates(
+            subset=["student_id", "attendance_date"],
+            keep="last"
+        )
+    )
+
+    attendance_pivot = (
+        attendance_df
+        .pivot(
+            index="student_id",
+            columns="attendance_date",
+            values="status"
+        )
+        .reindex(columns=all_dates)
+        .reset_index()
+    )
+
+    # Merge with the complete student master list.
+    # Therefore even students with no attendance records appear.
+    report = students_df.merge(
+        attendance_pivot,
+        on="student_id",
+        how="left"
+    )
+
+    # Every missing attendance record = Absent.
+    date_columns = [
+        col for col in report.columns
+        if isinstance(col, date)
+    ]
+
+    for col in date_columns:
+        report[col] = (
+            report[col]
+            .fillna("Absent")
+            .replace("", "Absent")
+        )
+
+    # Sort branch-wise, then student name.
+    report = report.sort_values(
+        by=["branch", "student_name"],
+        kind="stable"
+    )
+
+    # Rename fixed columns and date columns for the report.
+    rename_columns = {
+        "student_id": "Student ID",
+        "student_name": "Student Name",
+        "branch": "Branch",
+        "batch": "Batch"
+    }
+
+    for col in date_columns:
+        rename_columns[col] = col.strftime("%d-%m-%Y")
+
+    report = report.rename(columns=rename_columns)
+
+    # Keep student details first, followed by dates.
+    fixed_columns = [
+        "Student ID",
+        "Student Name",
+        "Branch",
+        "Batch"
+    ]
+
+    date_column_names = [
+        d.strftime("%d-%m-%Y")
+        for d in all_dates
+    ]
+
+    report = report[
+        fixed_columns + date_column_names
+    ]
+
+    return report
+
+
+# ============================================================
+# CREATE BRANCH-WISE EXCEL WORKBOOK
+# ============================================================
+
+def create_branch_wise_excel(report_df):
+    """
+    Create one Excel sheet per branch plus a Summary sheet.
+    """
+
+    output = BytesIO()
+
+    with pd.ExcelWriter(
+        output,
+        engine="openpyxl"
+    ) as writer:
+
+        # ----------------------------------------------------
+        # SUMMARY SHEET
+        # ----------------------------------------------------
+        date_columns = [
+            col for col in report_df.columns
+            if col not in [
+                "Student ID",
+                "Student Name",
+                "Branch",
+                "Batch"
+            ]
+        ]
+
+        summary_rows = []
+
+        for branch, branch_df in report_df.groupby(
+            "Branch",
+            sort=True
+        ):
+
+            total_students = len(branch_df)
+
+            # Total Present across all student/date cells.
+            total_present = sum(
+                (
+                    branch_df[date_columns]
+                    .astype(str)
+                    .apply(
+                        lambda col:
+                        col.str.strip().str.lower() == "present"
+                    )
+                    .sum()
+                )
+            )
+
+            total_possible = (
+                total_students * len(date_columns)
+            )
+
+            percentage = (
+                (total_present / total_possible) * 100
+                if total_possible > 0
+                else 0
+            )
+
+            summary_rows.append(
+                {
+                    "Branch": branch,
+                    "Total Students": total_students,
+                    "Total Present": int(total_present),
+                    "Total Attendance Entries": total_possible,
+                    "Attendance %": round(
+                        percentage,
+                        2
+                    )
+                }
+            )
+
+        summary_df = pd.DataFrame(summary_rows)
+
+        if not summary_df.empty:
+            summary_df.to_excel(
+                writer,
+                index=False,
+                sheet_name="Summary"
+            )
+
+        # ----------------------------------------------------
+        # ONE SHEET FOR EACH BRANCH
+        # ----------------------------------------------------
+        for branch, branch_df in report_df.groupby(
+            "Branch",
+            sort=True
+        ):
+
+            # Excel sheet names cannot exceed 31 characters.
+            # Also remove characters Excel does not allow.
+            safe_sheet_name = str(branch)
+
+            for char in [
+                "\\", "/", "*", "[", "]", ":", "?"
+            ]:
+                safe_sheet_name = safe_sheet_name.replace(
+                    char,
+                    "_"
+                )
+
+            safe_sheet_name = (
+                safe_sheet_name[:31] or "Branch"
+            )
+
+            branch_df.to_excel(
+                writer,
+                index=False,
+                sheet_name=safe_sheet_name
+            )
+
+        # ----------------------------------------------------
+        # FORMATTING
+        # ----------------------------------------------------
+        workbook = writer.book
+
+        for worksheet in workbook.worksheets:
+
+            worksheet.freeze_panes = "A2"
+            worksheet.auto_filter.ref = (
+                worksheet.dimensions
+            )
+
+            # Bold header
+            for cell in worksheet[1]:
+                cell.font = cell.font.copy(
+                    bold=True
+                )
+
+            # Reasonable column widths
+            for column_cells in worksheet.columns:
+
+                column_letter = (
+                    column_cells[0].column_letter
+                )
+
+                max_length = 0
+
+                for cell in column_cells:
+                    value = "" if cell.value is None else str(
+                        cell.value
+                    )
+                    max_length = max(
+                        max_length,
+                        len(value)
+                    )
+
+                worksheet.column_dimensions[
+                    column_letter
+                ].width = min(
+                    max(max_length + 2, 12),
+                    30
+                )
+
+    return output.getvalue()
 
 
 # ============================================================
@@ -1005,84 +1358,120 @@ if search_text.strip():
 
 
 # ============================================================
-# COMPLETE REPORT
+# COMPLETE ATTENDANCE REPORT
 # ============================================================
 
 st.divider()
 
 st.subheader(
-    "📋 Today's Attendance Report"
+    "📋 Complete Attendance Report"
 )
 
 st.write(
-    "The complete student report is loaded only "
-    "when requested."
+    "Generate attendance from Day 1 to today. "
+    "Every student is included and a missing attendance "
+    "record is treated as Absent."
 )
 
 
 if st.button(
-    "📊 View Today's Complete Report",
+    "📊 Generate Complete Attendance Report",
     use_container_width=True
 ):
 
     with st.spinner(
-        "Loading all students and attendance..."
+        "Loading all students and attendance history..."
     ):
 
         try:
 
-            report_df = get_full_today_report()
+            report_df = get_complete_attendance_report()
 
-            st.session_state.report_df = (
-                report_df
-            )
+            st.session_state.report_df = report_df
 
         except Exception as e:
 
             st.error(
-                f"Unable to create report: {e}"
+                f"Unable to create complete report: {e}"
             )
 
             st.session_state.report_df = None
 
 
 # ============================================================
-# DISPLAY REPORT
+# DISPLAY COMPLETE REPORT
 # ============================================================
 
 if st.session_state.report_df is not None:
 
     report_df = st.session_state.report_df
 
+    if report_df.empty:
 
-    st.success(
-        f"✅ Complete report loaded: "
-        f"{len(report_df)} students"
-    )
+        st.warning(
+            "No student data available."
+        )
 
+    else:
 
-    st.dataframe(
-        report_df,
-        use_container_width=True,
-        hide_index=True
-    )
+        st.success(
+            f"✅ Complete report loaded: "
+            f"{len(report_df)} students"
+        )
 
+        st.dataframe(
+            report_df,
+            use_container_width=True,
+            hide_index=True
+        )
 
-    # --------------------------------------------------------
-    # DOWNLOAD CSV
-    # --------------------------------------------------------
+        # ----------------------------------------------------
+        # BRANCH-WISE EXCEL
+        # ----------------------------------------------------
+        try:
 
-    csv_data = (
-        report_df
-        .to_csv(index=False)
-        .encode("utf-8")
-    )
+            excel_data = create_branch_wise_excel(
+                report_df
+            )
 
+            st.download_button(
+                label=(
+                    "📥 Download Branch-wise Excel "
+                    "(One Sheet per Branch)"
+                ),
+                data=excel_data,
+                file_name=(
+                    f"complete_attendance_"
+                    f"{today}.xlsx"
+                ),
+                mime=(
+                    "application/vnd.openxmlformats-"
+                    "officedocument.spreadsheetml.sheet"
+                ),
+                use_container_width=True
+            )
 
-    st.download_button(
-        label="📥 Download Today's Attendance CSV",
-        data=csv_data,
-        file_name=f"attendance_{today}.csv",
-        mime="text/csv",
-        use_container_width=True
-    )
+        except Exception as e:
+
+            st.error(
+                f"Unable to create Excel file: {e}"
+            )
+
+        # ----------------------------------------------------
+        # COMPLETE CSV
+        # ----------------------------------------------------
+        csv_data = (
+            report_df
+            .to_csv(index=False)
+            .encode("utf-8")
+        )
+
+        st.download_button(
+            label="📥 Download Complete Attendance CSV",
+            data=csv_data,
+            file_name=(
+                f"complete_attendance_{today}.csv"
+            ),
+            mime="text/csv",
+            use_container_width=True
+        )
