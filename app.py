@@ -975,59 +975,128 @@ st.markdown(
 )
 
 # ============================================================
-# BATCH-WISE PRESENT
+# BRANCH-WISE PRESENT
 # ============================================================
 
-st.subheader("📊 Batch-wise Present")
+st.subheader("📊 Branch-wise Present")
 
-# Student → Batch mapping is cached for 60 seconds so the
-# dashboard remains fast while still allowing periodic updates.
+# Student → Branch mapping
 @st.cache_data(ttl=60, show_spinner=False)
-def get_student_batch_map():
+def get_student_branch_map():
+
     students = get_all_students()
+
     return {
-        str(student["student_id"]): str(student["batch"])
+        str(student["student_id"]): str(student["branch"])
         for student in students
     }
 
+
 try:
-    student_batch_map = get_student_batch_map()
+
+    student_branch_map = get_student_branch_map()
+
 except Exception as e:
-    student_batch_map = {}
-    st.error(f"Unable to load batch information: {e}")
 
-batch_present = {}
+    student_branch_map = {}
 
-for record in today_records:
-    if str(record.get("status", "")).strip().lower() == "present":
-        student_id_key = str(record.get("student_id"))
-        batch = student_batch_map.get(student_id_key, "Unknown")
-        batch_present[batch] = batch_present.get(batch, 0) + 1
-
-batch_order = ["A", "1", "B", "2", "C", "3", "D", "4"]
-
-batch_columns = st.columns(len(batch_order))
-
-for column, batch in zip(batch_columns, batch_order):
-    with column:
-        st.metric(
-            f"Batch {batch}",
-            batch_present.get(batch, 0)
-        )
-
-# Show any unexpected batch values rather than silently losing them.
-unknown_present = batch_present.get("Unknown", 0)
-if unknown_present:
-    st.warning(
-        f"⚠️ {unknown_present} present student(s) could not be matched to a batch."
+    st.error(
+        f"Unable to load branch information: {e}"
     )
 
+
+# ------------------------------------------------------------
+# Count Present students branch-wise
+# ------------------------------------------------------------
+
+branch_present = {}
+
+for record in today_records:
+
+    if (
+        str(record.get("status", ""))
+        .strip()
+        .lower()
+        == "present"
+    ):
+
+        student_id_key = str(
+            record.get("student_id")
+        )
+
+        branch = student_branch_map.get(
+            student_id_key,
+            "Unknown"
+        )
+
+        branch_present[branch] = (
+            branch_present.get(branch, 0) + 1
+        )
+
+
+# ------------------------------------------------------------
+# Branch order
+# ------------------------------------------------------------
+
+branch_order = sorted(
+    [
+        branch
+        for branch in branch_present.keys()
+        if branch != "Unknown"
+    ]
+)
+
+
+# ------------------------------------------------------------
+# Display branch-wise metrics
+# ------------------------------------------------------------
+
+if branch_order:
+
+    branch_columns = st.columns(
+        len(branch_order)
+    )
+
+    for column, branch in zip(
+        branch_columns,
+        branch_order
+    ):
+
+        with column:
+
+            st.metric(
+                f"Branch {branch}",
+                branch_present.get(branch, 0)
+            )
+
+
+# ------------------------------------------------------------
+# Unknown branch warning
+# ------------------------------------------------------------
+
+unknown_present = branch_present.get(
+    "Unknown",
+    0
+)
+
+if unknown_present:
+
+    st.warning(
+        f"⚠️ {unknown_present} present student(s) "
+        f"could not be matched to a branch."
+    )
+
+
+# ------------------------------------------------------------
+# Total Present
+# ------------------------------------------------------------
+
 st.markdown(
-    f"### 🟢 **TOTAL PRESENT: {present_count} / {total_strength}**"
+    f"### 🟢 **TOTAL PRESENT: "
+    f"{present_count} / {total_strength}**"
 )
 
 st.divider()
-
 # ============================================================
 # BRANCH-WISE ATTENDANCE ENTRY
 # ============================================================
