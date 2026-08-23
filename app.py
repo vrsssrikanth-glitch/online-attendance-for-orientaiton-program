@@ -85,7 +85,7 @@ def get_all_students():
     all_students = []
 
     start = 0
-    page_size = 1000
+    page_size = 1500
 
     while True:
 
@@ -123,7 +123,7 @@ def get_today_attendance():
     all_records = []
 
     start = 0
-    page_size = 1000
+    page_size = 1500
 
     while True:
 
@@ -145,11 +145,11 @@ def get_today_attendance():
             .execute()
         )
 
-        batch = response.data or []
+        branch = response.data or []
 
-        all_records.extend(batch)
+        all_records.extend(branch)
 
-        if len(batch) < page_size:
+        if len(branch) < page_size:
             break
 
         start += page_size
@@ -345,7 +345,7 @@ def get_all_attendance():
     all_records = []
 
     start = 0
-    page_size = 1000
+    page_size = 1500
 
     while True:
         response = (
