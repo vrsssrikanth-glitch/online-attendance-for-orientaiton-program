@@ -85,7 +85,7 @@ def get_all_students():
     all_students = []
 
     start = 0
-    page_size = 1500
+    page_size = 1000
 
     while True:
 
@@ -123,7 +123,7 @@ def get_today_attendance():
     all_records = []
 
     start = 0
-    page_size = 1500
+    page_size = 1000
 
     while True:
 
@@ -345,7 +345,7 @@ def get_all_attendance():
     all_records = []
 
     start = 0
-    page_size = 1500
+    page_size = 1000
 
     while True:
         response = (
