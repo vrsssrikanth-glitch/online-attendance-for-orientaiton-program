@@ -70,6 +70,7 @@ def get_total_strength():
             "student_id",
             count="exact"
         )
+        .eq("active", True)
         .execute()
     )
 
