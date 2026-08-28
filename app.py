@@ -1181,8 +1181,13 @@ if branch_values:
     for student in branch_students:
         sid = str(student["student_id"])
         existing = branch_attendance.get(sid)
+        is_active = student.get("active", True)
 
-        if existing:
+        if not is_active:
+            status_text = "⛔ Inactive"
+            default_value = False
+            disabled = True
+        elif existing:
             status = str(existing.get("status", "")).strip().lower()
 
             if status == "present":
