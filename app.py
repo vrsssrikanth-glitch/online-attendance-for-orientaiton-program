@@ -94,7 +94,7 @@ def get_all_students():
             supabase
             .table("students")
             .select(
-                "student_id, student_name, branch, batch"
+                "student_id, student_name, branch, batch, active"
             )
             .range(
                 start,
@@ -178,7 +178,7 @@ def search_students(search_text):
         supabase
         .table("students")
         .select(
-            "student_id, student_name, branch, batch"
+            "student_id, student_name, branch, batch, active"
         )
         .ilike(
             "student_name",
@@ -205,7 +205,7 @@ def search_students(search_text):
                 supabase
                 .table("students")
                 .select(
-                    "student_id, student_name, branch, batch"
+                    "student_id, student_name, branch, batch, active"
                 )
                 .eq(
                     "student_id",
@@ -223,7 +223,7 @@ def search_students(search_text):
                 supabase
                 .table("students")
                 .select(
-                    "student_id, student_name, branch, batch"
+                    "student_id, student_name, branch, batch, active"
                 )
                 .ilike(
                     "student_id",
