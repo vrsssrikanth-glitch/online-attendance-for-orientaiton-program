@@ -387,7 +387,7 @@ def get_complete_attendance_report():
 
     Every student from the students table is included.
     If a student has no attendance record for a date,
-    that date is shown as Absent.
+    that date is shown as Not Marked.
     """
 
     students = get_all_students()
@@ -474,7 +474,7 @@ def get_complete_attendance_report():
         how="left"
     )
 
-    # Every missing attendance record = Absent.
+    # Every missing attendance record = Not Marked.
     date_columns = [
         col for col in report.columns
         if isinstance(col, date)
@@ -483,8 +483,8 @@ def get_complete_attendance_report():
     for col in date_columns:
         report[col] = (
             report[col]
-            .fillna("Absent")
-            .replace("", "Absent")
+            .fillna("Not Marked")
+            .replace("", "Not Marked")
         )
 
     # Sort branch-wise, then student name.
@@ -737,10 +737,9 @@ def get_full_today_report():
 
         if record:
 
-            status = record.get(
-                "status",
-                ""
-            )
+            status = str(record.get("status", "")).strip().title()
+            if status not in {"Present", "Absent"}:
+                status = "Not Marked"
 
             attendance_date = record.get(
                 "attendance_date",
@@ -1211,7 +1210,7 @@ if branch_values:
             default_value = sid in st.session_state.selected_present_students
             disabled = False
 
-        row1, row2, row3, row4 = st.columns([0.9, 4.5, 1.3, 1.2])
+        row1, row2, row3, row4, row5 = st.columns([0.9, 4.2, 1.35, 1.15, 1.15])
 
         with row1:
             st.write(f"**{student['student_id']}**")
@@ -1244,6 +1243,46 @@ if branch_values:
                     st.session_state.selected_present_students.add(sid)
                 else:
                     st.session_state.selected_present_students.discard(sid)
+
+        with row5:
+            # Absent is available only when today's attendance is not marked.
+            if not disabled and not existing and is_active:
+                if st.button(
+                    "Absent",
+                    key=f"absent_mark_{selected_branch}_{sid}",
+                    use_container_width=True
+                ):
+                    try:
+                        original_student = next(
+                            s for s in branch_students
+                            if str(s["student_id"]) == sid
+                        )
+
+                        save_attendance(
+                            original_student["student_id"],
+                            "Absent",
+                            faculty_name
+                        )
+
+                        st.session_state.selected_present_students.discard(sid)
+
+                        st.success(
+                            f"Attendance marked ABSENT for "
+                            f"{original_student['student_name']}."
+                        )
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Unable to save ABSENT attendance: {e}")
+            elif existing:
+                st.button(
+                    "Absent",
+                    key=f"absent_done_{selected_branch}_{sid}",
+                    disabled=True,
+                    use_container_width=True
+                )
+            else:
+                st.write("")
 
     st.divider()
 
@@ -1467,7 +1506,7 @@ st.subheader(
 st.write(
     "Generate attendance from Day 1 to today. "
     "Every student is included and a missing attendance "
-    "record is treated as Absent."
+    "record is shown as Not Marked."
 )
 
 
