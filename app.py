@@ -126,8 +126,8 @@ if "faculty_name" not in st.session_state:
 if "report_df" not in st.session_state:
     st.session_state.report_df = None
 
-if "selected_present_students" not in st.session_state:
-    st.session_state.selected_present_students = set()
+if "selected_students" not in st.session_state:
+    st.session_state.selected_students = set()
 
 
 # ============================================================
@@ -196,7 +196,6 @@ def search_students(search_text):
     if not search_text:
         return []
 
-    # Search by Student Name
     response = (
         supabase
         .table("students")
@@ -207,7 +206,6 @@ def search_students(search_text):
     )
     students = response.data or []
 
-    # Search by Student ID if name returns nothing
     if not students:
         try:
             numeric_id = int(search_text)
@@ -511,7 +509,7 @@ with f_col2:
     if st.button("Logout / Change", use_container_width=True):
         st.session_state.faculty_name = ""
         st.session_state.report_df = None
-        st.session_state.selected_present_students = set()
+        st.session_state.selected_students = set()
         st.rerun()
 
 faculty_name = st.session_state.faculty_name
@@ -661,7 +659,7 @@ with tab_dash:
 # ------------------------------------------------------------
 with tab_branch:
     st.subheader("📝 Mark Attendance by Branch")
-    st.caption("Select a branch to mark present or absent students. Use quick select actions for maximum speed.")
+    st.caption("Select a branch to mark attendance. Select mode below to post either Absentees or Presentees.")
 
     try:
         all_students = get_all_students()
@@ -699,23 +697,30 @@ with tab_branch:
         }
 
         # Filter session selections to active branch
-        st.session_state.selected_present_students = {
-            sid for sid in st.session_state.selected_present_students if sid in branch_student_ids
+        st.session_state.selected_students = {
+            sid for sid in st.session_state.selected_students if sid in branch_student_ids
         }
+
+        # Select Mode: Post Only Absentees vs Post Only Present
+        post_mode = st.radio(
+            "Posting Mode Option:",
+            ["Post Only Absentees (Selected = Absent, Rest = Present)", "Post Only Present (Selected = Present, Rest = Absent)"],
+            horizontal=True
+        )
 
         # Quick actions bar
         act1, act2, act3 = st.columns([1.5, 1.5, 3])
         with act1:
-            if st.button("✅ Select All Unmarked", use_container_width=True):
+            if st.button("✅ Select All Active", use_container_width=True):
                 for s in branch_students:
                     sid = str(s["student_id"])
-                    if sid not in branch_attendance and s.get("active", True):
-                        st.session_state.selected_present_students.add(sid)
+                    if s.get("active", True):
+                        st.session_state.selected_students.add(sid)
                 st.rerun()
 
         with act2:
             if st.button("🧹 Clear Selections", use_container_width=True):
-                st.session_state.selected_present_students.clear()
+                st.session_state.selected_students.clear()
                 st.rerun()
 
         st.divider()
@@ -724,13 +729,14 @@ with tab_branch:
         already_absent = 0
         unmarked_count = 0
 
+        checkbox_label = "Select Absent" if "Absentees" in post_mode else "Select Present"
+
         # Header Row
-        h1, h2, h3, h4, h5 = st.columns([1.2, 3.5, 1.5, 1.5, 1.5])
+        h1, h2, h3, h4 = st.columns([1.2, 4, 2, 2])
         with h1: st.markdown("**Student ID**")
         with h2: st.markdown("**Student Name / Batch**")
         with h3: st.markdown("**Today's Status**")
-        with h4: st.markdown("**Mark Present**")
-        with h5: st.markdown("**Quick Action**")
+        with h4: st.markdown(f"**{checkbox_label}**")
 
         st.divider()
 
@@ -740,7 +746,7 @@ with tab_branch:
             existing = branch_attendance.get(sid)
             is_active = student.get("active", True)
 
-            r1, r2, r3, r4, r5 = st.columns([1.2, 3.5, 1.5, 1.5, 1.5])
+            r1, r2, r3, r4 = st.columns([1.2, 4, 2, 2])
 
             with r1:
                 st.write(f"`{sid}`")
@@ -767,69 +773,71 @@ with tab_branch:
                     st.markdown("<span class='status-badge badge-pending'>Not Marked</span>", unsafe_allow_html=True)
 
             with r4:
-                if not is_active or existing:
-                    default_checked = (existing and str(existing.get("status", "")).strip().lower() == "present")
-                    st.checkbox("Present", value=default_checked, disabled=True, key=f"dis_{selected_branch}_{sid}")
+                if not is_active:
+                    st.checkbox(checkbox_label, value=False, disabled=True, key=f"dis_{selected_branch}_{sid}")
                 else:
-                    is_selected = sid in st.session_state.selected_present_students
-                    checked = st.checkbox("Present", value=is_selected, key=f"chk_{selected_branch}_{sid}")
+                    is_selected = sid in st.session_state.selected_students
+                    checked = st.checkbox(checkbox_label, value=is_selected, key=f"chk_{selected_branch}_{sid}")
                     if checked:
-                        st.session_state.selected_present_students.add(sid)
+                        st.session_state.selected_students.add(sid)
                     else:
-                        st.session_state.selected_present_students.discard(sid)
-
-            with r5:
-                if is_active and not existing:
-                    if st.button("Mark Absent", key=f"abs_{selected_branch}_{sid}", use_container_width=True):
-                        try:
-                            save_attendance(student["student_id"], "Absent", faculty_name)
-                            st.session_state.selected_present_students.discard(sid)
-                            st.toast(f"Marked ABSENT for {student['student_name']}", icon="🔴")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error marking absent: {e}")
-                else:
-                    st.write("—")
+                        st.session_state.selected_students.discard(sid)
 
         st.divider()
 
-        # Submit Section with ultra-fast bulk upsert
-        selected_ids = [
-            sid for sid in st.session_state.selected_present_students
-            if sid in branch_student_ids and sid not in branch_attendance
-        ]
+        # Calculate counts based on selection mode
+        active_branch_students = [s for s in branch_students if s.get("active", True)]
+        selected_ids = {sid for sid in st.session_state.selected_students if sid in branch_student_ids}
+
+        if "Absentees" in post_mode:
+            target_absents = len(selected_ids)
+            target_presents = len(active_branch_students) - target_absents
+        else:
+            target_presents = len(selected_ids)
+            target_absents = len(active_branch_students) - target_presents
 
         b_sum1, b_sum2, b_sum3, b_sum4 = st.columns(4)
-        with b_sum1: st.metric("Total in View", len(branch_students))
-        with b_sum2: st.metric("Already Present", already_present)
-        with b_sum3: st.metric("Already Absent", already_absent)
-        with b_sum4: st.metric("Selected to Submit", len(selected_ids))
+        with b_sum1: st.metric("Total Active in Branch", len(active_branch_students))
+        with b_sum2: st.metric("Will Mark Present", target_presents)
+        with b_sum3: st.metric("Will Mark Absent", target_absents)
+        with b_sum4: st.metric("Selected Checkboxes", len(selected_ids))
+
+        btn_label = f"⚡ Submit Attendance ({target_presents} Present, {target_absents} Absent)"
 
         if st.button(
-            f"⚡ Submit {len(selected_ids)} Student(s) as PRESENT in 1-Click",
+            btn_label,
             type="primary",
             use_container_width=True,
-            disabled=len(selected_ids) == 0
+            disabled=len(active_branch_students) == 0
         ):
-            bulk_payload = [
-                {
+            bulk_payload = []
+
+            for s in active_branch_students:
+                sid = str(s["student_id"])
+                
+                if "Absentees" in post_mode:
+                    # Checked are Absentees, unchecked are Present
+                    status = "Absent" if sid in selected_ids else "Present"
+                else:
+                    # Checked are Present, unchecked are Absentees
+                    status = "Present" if sid in selected_ids else "Absent"
+
+                bulk_payload.append({
                     "student_id": int(sid) if sid.isdigit() else sid,
                     "attendance_date": today,
-                    "status": "Present",
+                    "status": status,
                     "marked_by": faculty_name,
                     "marked_at": current_time
-                }
-                for sid in selected_ids
-            ]
+                })
 
-            with st.spinner("Submitting attendance instantly..."):
+            with st.spinner("Saving complete branch attendance..."):
                 try:
                     save_bulk_attendance(bulk_payload)
-                    st.session_state.selected_present_students.clear()
-                    st.success(f"✅ Fast Sync Complete! Marked {len(bulk_payload)} students as PRESENT.")
+                    st.session_state.selected_students.clear()
+                    st.success(f"✅ Attendance saved! ({target_presents} Present, {target_absents} Absent).")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Failed to submit batch attendance: {e}")
+                    st.error(f"Failed to submit attendance: {e}")
     else:
         st.warning("No branch data found in student records.")
 
