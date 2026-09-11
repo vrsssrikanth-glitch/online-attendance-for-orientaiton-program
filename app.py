@@ -708,21 +708,6 @@ with tab_branch:
             horizontal=True
         )
 
-        # Quick actions bar
-        act1, act2, act3 = st.columns([1.5, 1.5, 3])
-        with act1:
-            if st.button("✅ Select All Active", use_container_width=True):
-                for s in branch_students:
-                    sid = str(s["student_id"])
-                    if s.get("active", True):
-                        st.session_state.selected_students.add(sid)
-                st.rerun()
-
-        with act2:
-            if st.button("🧹 Clear Selections", use_container_width=True):
-                st.session_state.selected_students.clear()
-                st.rerun()
-
         st.divider()
 
         already_present = 0
@@ -816,10 +801,8 @@ with tab_branch:
                 sid = str(s["student_id"])
                 
                 if "Absentees" in post_mode:
-                    # Checked are Absentees, unchecked are Present
                     status = "Absent" if sid in selected_ids else "Present"
                 else:
-                    # Checked are Present, unchecked are Absentees
                     status = "Present" if sid in selected_ids else "Absent"
 
                 bulk_payload.append({
